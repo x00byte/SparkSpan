@@ -8,3 +8,6 @@ settings/
 *.local.json
 .env
 output/
+*.sqlite3*
+*.log
+screenshots/

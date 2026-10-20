@@ -1,0 +1,10 @@
+{
+  "runtime_dir": "/var/lib/sparkspan-dashboard",
+  "gateway_url": "http://127.0.0.1:8888",
+  "gateway_config": "/secure/sparkspan/config.json",
+  "poll_seconds": 3,
+  "allowed_hosts": ["localhost", "127.0.0.1", "dashboard.example"],
+  "test_targets": [
+    {"name": "isolated-worker", "label": "Worker model test", "kind": "direct-test", "url": "http://worker:8988"}
+  ]
+}

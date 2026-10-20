@@ -20,6 +20,7 @@ Each request runs on one backend. Replicas own their weights and KV caches; the 
 - Passes through streaming SSE, non-streaming results, tool calls, reasoning and usage. Client cancellation closes the upstream connection and releases its slot.
 - Drains one backend for maintenance without cancelling its active responses or restarting the other model.
 - Provides bounded queues, connection-failure failover, backend health checks and aggregate Prometheus metrics with a `replica` label.
+- Includes an optional custom dashboard for live metrics, rolling windows, deliberate benchmarks and admission controls.
 
 SparkSpan runs on the CPU and does not load weights, quantize models, share KV caches, or change inference kernels. It does not automatically load or evict models. Shared host limits count requests; they cannot guarantee that several loaded models fit in GPU memory.
 
@@ -61,6 +62,31 @@ SPARK_GATEWAY_CONFIG="$PWD/settings/config.json" .venv/bin/uvicorn gateway:app \
 ```
 
 Run **one gateway process**. Multiple Uvicorn workers would have separate admission tables. The gateway does not add authentication or TLS. Authorization headers pass through to the selected backend; health and model discovery currently use unauthenticated internal requests. Put authentication at a trusted ingress and restrict direct backend access as appropriate for your network.
+
+## Dashboard
+
+![SparkSpan dashboard: live metrics and throughput history](assets/dashboard.png)
+
+The [dashboard](dashboard/README.md) brings live generation and uncached prefill rates, backend health, model discovery, rolling windows, benchmarks and admission controls together on port **11002**. It uses custom HTML, CSS, JavaScript and chart drawing, with no frontend framework, chart package or external font.
+
+Use Admin to drain a backend or change request limits without restarting the models. Live status distinguishes saved settings from settings actually applied by the gateway. Benchmarks require an explicit target and confirmation; isolated test engines stay outside production aggregates. Viewing the dashboard never sends model inference requests.
+
+The screenshot is a captured interface example. Its displayed rates are a momentary observation, not a controlled benchmark or sustained performance claim. See [measurement](#validation-and-measurement) for the limits of the available GPU comparison.
+
+Install and run from the repository root after creating a private dashboard configuration:
+
+```bash
+.venv/bin/pip install -r dashboard/requirements.txt
+mkdir -p runtime/dashboard
+chmod 700 runtime/dashboard
+cp dashboard/config.example.json runtime/dashboard/config.json
+# Set gateway_url, the absolute gateway_config path, runtime_dir and allowed_hosts.
+SPARKSPAN_DASHBOARD_CONFIG="$PWD/runtime/dashboard/config.json" \
+  .venv/bin/python -m uvicorn dashboard.app:app \
+  --host 0.0.0.0 --port 11002 --no-access-log --no-proxy-headers
+```
+
+The dashboard needs read/write access to the gateway settings directory to save atomic admission changes. It needs no GPU or Docker socket. It is a trusted-LAN application without an account login; [setup, controls and deployment](dashboard/README.md) explain its scope.
 
 ## Calling the API
 
@@ -127,6 +153,10 @@ Ordinary 1 Gb/s LAN inference routing was separately verified; the dedicated lin
 
 ```bash
 .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pytest -q --ignore=dashboard
+# To include dashboard and browser tests:
+.venv/bin/pip install -r dashboard/requirements-dev.txt
+.venv/bin/playwright install chromium --only-shell
 .venv/bin/pytest -q
 ```
 
@@ -138,4 +168,4 @@ No project license has been selected. Publication does not grant a general licen
 
 ## Credits
 
-[myllmbox's Qwen3.8 Flash Next recipe](https://github.com/myllmbox/qwen38-flash-next-recipe) supplied the inference recipe used for the initial GPU deployment. The measured model was [myllmbox/Qwen3.8-Flash-Next-hibrid48-uncensored](https://huggingface.co/myllmbox/Qwen3.8-Flash-Next-hibrid48-uncensored), based on Qwen. [vLLM](https://github.com/vllm-project/vllm) supplied inference and native metrics; no vLLM engine source is bundled here. [FastAPI](https://github.com/fastapi/fastapi), [HTTPX](https://github.com/encode/httpx) and [Uvicorn](https://github.com/Kludex/uvicorn) provide the HTTP components. The cover is an illustrative image, not a photograph of the measured installation. SparkSpan is an independent project and does not imply endorsement by these projects or hardware vendors.
+[myllmbox's Qwen3.8 Flash Next recipe](https://github.com/myllmbox/qwen38-flash-next-recipe) supplied the inference recipe used for the initial GPU deployment. The measured model was [myllmbox/Qwen3.8-Flash-Next-hibrid48-uncensored](https://huggingface.co/myllmbox/Qwen3.8-Flash-Next-hibrid48-uncensored), based on Qwen. [vLLM](https://github.com/vllm-project/vllm) supplied inference and native metrics; no vLLM engine source is bundled here. [FastAPI](https://github.com/fastapi/fastapi), [HTTPX](https://github.com/encode/httpx) and [Uvicorn](https://github.com/Kludex/uvicorn) provide the HTTP components. [Playwright](https://github.com/microsoft/playwright-python) supplies dashboard browser testing. The dashboard application and frontend were written for SparkSpan; no source from the previous local monitoring dashboard is bundled. The cover is an illustrative image, not a photograph of the measured installation. SparkSpan is an independent project and does not imply endorsement by these projects or hardware vendors.

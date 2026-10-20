@@ -1,5 +1,9 @@
 # Operating SparkSpan
 
+## Dashboard
+
+The optional [control room](../dashboard/README.md) monitors the gateway on port 11002 and provides admission edits, rollback and deliberate benchmarks. It runs as a separate CPU service. Point it at the gateway API and the same gateway settings file; it does not load models or change the production endpoint. The UI labels missing data and stale metrics rather than treating an unreachable backend as idle.
+
 ## Scheduling
 
 Admission reserves slots atomically. Each backend is polled about once per second for vLLM running and queued requests, including direct traffic that bypasses SparkSpan. Those observations can briefly lag new direct requests; the model server remains the final scheduler.

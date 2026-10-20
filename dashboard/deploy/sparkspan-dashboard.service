@@ -1,0 +1,20 @@
+[Unit]
+Description=SparkSpan Dashboard on 11002
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/Projects/SparkSpan
+Environment=SPARKSPAN_DASHBOARD_CONFIG=%h/.local/state/sparkspan-dashboard/config.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=%h/.local/state/sparkspan-dashboard/venv/bin/python -m uvicorn dashboard.app:app --host 0.0.0.0 --port 11002 --no-access-log --no-proxy-headers --timeout-graceful-shutdown 5
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+MemoryMax=512M
+CPUQuota=100%
+Nice=5
+
+[Install]
+WantedBy=default.target
