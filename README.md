@@ -6,13 +6,11 @@ SparkSpan routes OpenAI-compatible chat and completion requests across independe
 
 Each request runs on one backend. Replicas own their weights and KV caches; the gateway balances requests rather than splitting a model across GPUs. A dedicated GPU interconnect is unnecessary for this arrangement. Every model must fit on its assigned backend, and the machines still need ordinary network connectivity.
 
-## Keep production running while testing
+## Inspiration
 
-SparkSpan grew out of losing production time whenever a new model or recipe needed both machines. With independent servers, leave production on Spark A, drain Spark B, test there, then return B to the pool. Spark A's model process keeps running throughout. A dedicated interconnect is unnecessary for this workflow.
+1. **Keep production running while testing.** Leave production on Spark A, drain Spark B, then use B to test models or build recipes. Restore its production model and resume routing when ready, without restarting A. Capacity is temporarily lower, so queues and latency can increase. [Maintenance workflow](docs/operations.md#testing-on-one-spark).
 
-Set `"draining": true` on B in the settings file. After the hot reload, B accepts no new gateway requests while existing responses finish. Check `/admin/status` for `draining`, `gateway_inflight`, native `running`/`waiting` and `drained` before stopping B's model. Once the original model is restored and healthy, set `draining` to `false` to return it. [Step-by-step maintenance](docs/operations.md#testing-on-one-spark).
-
-This temporarily reduces production admission from twelve slots to six in our example. Production continues on A with less capacity; it can queue or slow under the same workload. Configuration reload and native metrics are polled, so a drain is not an instantaneous guarantee that the other engine has no work. Direct clients and older gateway instances must also stop assigning B work.
+2. **Use several models through one endpoint.** Run different model servers across machines or several on one box, without constantly changing client ports, endpoints or connection settings. Each request's `model` selects a matching backend, and shared host admission limits control their combined request load. [Multi-model setup](#several-models-one-endpoint).
 
 ## What it does
 
