@@ -109,5 +109,6 @@
     "The ten-minute measured HTTP window used the fabric path, not the ordinary LAN.",
     "No public prompts or full production request traces; only sanitized aggregates.",
     "Independent replicas each require a full model copy and have separate caches."
-  ]
+  ],
+  "status": "Historical provenance only; withdrawn as a topology performance comparison because observation durations and workloads were unequal."
 }

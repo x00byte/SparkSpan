@@ -8,7 +8,27 @@ The score combines active request count, estimated outstanding prefill work and 
 
 With the example configuration, up to 32 requests can wait for admission for up to 120 seconds. Full or expired queues return HTTP 429 with `Retry-After`. JSON bodies are limited to 32 MiB each and 128 MiB across buffered requests. There is no FIFO or per-user fairness guarantee. A very large request can still occupy a backend for a long time.
 
-Changing `capacity` or `host_limits` in the settings JSON updates admission without restarting the gateway or models. Prefer atomic file replacement. A backend capacity must be between one and its `max_capacity` (eight by default). Malformed updates retain the last valid limits. In-flight requests finish when a limit is reduced. Backend identity, model filters and other settings require a gateway restart.
+Changing `capacity`, `draining` or `host_limits` in the settings JSON updates admission without restarting the gateway or models. Prefer atomic file replacement. A backend capacity must be between one and its `max_capacity` (eight by default). Malformed updates retain the last valid limits. In-flight requests finish when a limit is reduced. Backend identity, model filters and other settings require a gateway restart.
+
+## Testing on one Spark
+
+The maintenance workflow keeps the production model on A running while B is used for experiments:
+
+1. Atomically set `"draining": true` on B in the mounted settings JSON. Keep its capacity unchanged so resuming restores the intended target. Apply this to every gateway that can still route production to B; old keepalive connections may still reach an older gateway after a cutover.
+2. Wait for `/admin/status` to report B as `draining: true` and `accepting: false`. Reload occurs on the polling loop, not at the instant the file changes. Leases reserved before the update continue; unreserved queued requests use another compatible backend, or receive 503 if none remains. Explicit pins do not override draining.
+3. Wait for B's `gateway_inflight`, native `running` and native `waiting` to reach zero with a successful fresh poll (`metrics_age_seconds` reports its age). `drained: true` requires those conditions; an unreachable engine is not evidence that it has finished. Confirm zero across at least two fresh polling intervals and ensure there are no direct clients or other gateways sending work.
+4. Stop only B's production model using your own scoped launcher. Test a new engine or model there on a separate port or behind restricted access so it cannot accidentally receive production requests. Keep the configured production backend draining throughout.
+5. Restore the intended production model and aliases on B, verify its `/v1/models`, and set `"draining": false`. It resumes admission when health and metrics are valid. A's production model does not need a restart.
+
+With two six-slot replicas, draining B reduces the configured production capacity from twelve to six. Queues or latency can increase at the same incoming load. Cached conversations previously on B can move to A and need prefill again. This preserves a running production service; it does not guarantee unchanged performance or eliminate all waiting.
+
+Only stop the engine after drain verification. Gateway health and metrics are sampled and can briefly lag external traffic. A second unconfigured gateway, a direct client, or a newly connected client can invalidate an idle observation. Drain prevents admission through this gateway after its configuration update; it is not a distributed lock on the GPU.
+
+Status distinguishes `healthy` from `accepting`: a healthy draining engine is not accepting new work. `capacity` counts healthy non-draining backends, `configured_capacity` counts all non-draining backends, and `total_configured_capacity` retains the full pool size. Native counters and the engine's existing in-flight requests continue to appear during draining. Prometheus also exposes `spark_gateway_draining`, `spark_gateway_drained` and `spark_gateway_accepting` per replica.
+
+`/ready` requires all non-draining backends to be healthy and at least one backend accepting work. Thus planned B maintenance does not make a healthy A unready. Models available only on B disappear from `/v1/models` while it drains; requests for such a configured model receive 503 and are never substituted with another model. If all backends drain, `/health` and `/ready` return 503.
+
+Gateway changes must themselves be rolled out without cutting active streams: start the new CPU gateway on another port, direct new connections there, and retain the old process until its own active requests finish. Existing HTTP keepalive connections can still assign work through the old instance. Every live gateway needs drain support and the same maintenance setting; a new process cannot retroactively drain an older process. The included endpoint helper accepts only fixed ports 8890 and 8891, so review any staged deployment using another port rather than assuming it is redirected.
 
 ## Health and failures
 

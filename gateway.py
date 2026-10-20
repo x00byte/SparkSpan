@@ -57,6 +57,7 @@ class Node:
     max_capacity: int = 8
     models: list[str] | None = None
     host: str | None = None
+    draining: bool = False
     healthy: bool = False
     inflight: int = 0
     sent: int = 0
@@ -86,11 +87,14 @@ class Pool:
         if not self.nodes or any(type(n.capacity) is not int or type(n.max_capacity) is not int
                                  or not 1 <= n.capacity <= n.max_capacity for n in self.nodes):
             raise ValueError('Each backend needs a positive capacity within its configured maximum')
+        if any(type(n.draining) is not bool for n in self.nodes):
+            raise ValueError('Backend draining must be a boolean')
         self.secret = config.get('affinity_secret', 'test-only').encode()
         self.host_limits = config.get('host_limits', {})
         if not isinstance(self.host_limits, dict) or any(type(v) is not int or v <= 0 for v in self.host_limits.values()):
             raise ValueError('Host limits must be positive request counts')
         self.condition = asyncio.Condition()
+        self.poll_lock = asyncio.Lock()
         self.affinity = OrderedDict()
         self.queued = 0
         self.buffered = 0
@@ -115,12 +119,16 @@ class Pool:
             caps = [n['capacity'] for n in nodes]
             if not all(type(c) is int and 1 <= c <= n.max_capacity for c, n in zip(caps, self.nodes)):
                 return
+            draining = [n.get('draining', False) for n in nodes]
+            if any(type(value) is not bool for value in draining):
+                return
             host_limits = updated.get('host_limits', self.host_limits)
             if not isinstance(host_limits, dict) or any(type(v) is not int or v <= 0 for v in host_limits.values()):
                 return
             async with self.condition:
-                for node, capacity in zip(self.nodes, caps):
+                for node, capacity, drain in zip(self.nodes, caps, draining):
                     node.capacity = capacity
+                    node.draining = drain
                 self.host_limits = host_limits
                 self.config_mtime = mtime
                 self.condition.notify_all()
@@ -181,7 +189,8 @@ class Pool:
                 async with self.condition:
                     node.healthy = False
                     self.condition.notify_all()
-        await asyncio.gather(*(one(n) for n in self.nodes))
+        async with self.poll_lock:
+            await asyncio.gather(*(one(n) for n in self.nodes))
 
     async def loop(self):
         while not self.closed:
@@ -189,8 +198,15 @@ class Pool:
             await self.poll()
             await asyncio.sleep(self.config.get('poll_seconds', 1))
 
-    def usable(self, n):
+    def healthy(self, n):
         return n.healthy and not n.stalled and time.monotonic() - n.checked < 5
+
+    def usable(self, n):
+        return self.healthy(n) and not n.draining
+
+    def drained(self, n):
+        # A failed/stale poll cannot prove the engine has finished its work.
+        return n.draining and self.healthy(n) and n.inflight == 0 and n.running + n.waiting == 0
 
     def host_has_room(self, node):
         if node.host not in self.host_limits:
@@ -260,13 +276,16 @@ class Pool:
                     if type(m.get('max_model_len')) is int]
         return {'mode': 'independent-replicas', 'context_per_request': min(contexts) if contexts else None,
                 'capacity': self.total_capacity([n for n in self.nodes if self.usable(n)]),
-                'configured_capacity': self.total_capacity(self.nodes), 'queued': self.queued,
+                'configured_capacity': self.total_capacity([n for n in self.nodes if not n.draining]),
+                'total_configured_capacity': self.total_capacity(self.nodes), 'queued': self.queued,
                 'host_limits': self.host_limits,
                 'completed': self.completed, 'failed': self.failed,
-                'backends': [{'name': n.name, 'healthy': self.usable(n), 'stalled': n.stalled,
+                'backends': [{'name': n.name, 'healthy': self.healthy(n), 'accepting': self.usable(n),
+                              'draining': n.draining, 'drained': self.drained(n), 'stalled': n.stalled,
                               'models': sorted(n.model_info),
                               'host': n.host,
                               'capacity': n.capacity, 'running': n.running, 'waiting': n.waiting,
+                              'metrics_age_seconds': round(max(0, time.monotonic() - n.checked), 3) if n.checked else None,
                               'gateway_inflight': n.inflight, 'admission_load': n.load,
                               'estimated_prefill_tokens': n.debt} for n in self.nodes]}
 
@@ -341,7 +360,7 @@ def create_app(config=None, transport=None):
         status = pool.status()
         ready = status['capacity'] > 0
         if request.url.path == '/ready':
-            ready = all(pool.usable(n) for n in pool.nodes)
+            ready = ready and all(pool.healthy(n) for n in pool.nodes if not n.draining)
         return JSONResponse(status, status_code=200 if ready else 503)
 
     @app.get('/metrics')
@@ -350,7 +369,8 @@ def create_app(config=None, transport=None):
         for n in pool.nodes:
             # Keep last counters on transient outages; stale gauges are marked by backend_up.
             lines.extend(add_replica(n.metrics, n.name, seen))
-            for name, value in [('backend_up', int(pool.usable(n))), ('inflight', n.inflight),
+            for name, value in [('backend_up', int(pool.healthy(n))), ('accepting', int(pool.usable(n))),
+                                ('draining', int(n.draining)), ('drained', int(pool.drained(n))), ('inflight', n.inflight),
                                 ('prefill_tokens_estimate', n.debt), ('capacity', n.capacity)]:
                 lines.append(f'spark_gateway_{name}{{replica={json.dumps(n.name)}}} {value}')
         lines.extend([f'spark_gateway_queue {pool.queued}', f'spark_gateway_completed_total {pool.completed}',

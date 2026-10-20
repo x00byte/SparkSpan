@@ -334,3 +334,120 @@ async def test_capacity_changes_drain_existing_work_and_reject_bad_config(tmp_pa
         p.write_text(json.dumps(settings))
         await pool.refresh_capacity()
         assert [n.capacity for n in pool.nodes] == [6, 6]
+
+
+async def set_drain(pool, path, name, value):
+    settings = {'backends': [{'name': n.name, 'url': n.url, 'capacity': n.capacity,
+                              'draining': value if n.name == name else n.draining} for n in pool.nodes]}
+    path.write_text(json.dumps(settings))
+    pool.config_path = path
+    await pool.refresh_capacity()
+
+
+@pytest.mark.asyncio
+async def test_hot_drain_finishes_existing_stream_and_resume_restores_capacity(tmp_path):
+    async with cluster(capacity=1) as (c, pool, a, b):
+        active = asyncio.create_task(c.post('/v1/chat/completions', json={
+            'model': 'test', 'delay': .05, 'count': 10}, headers={'X-Spark-Node': 'b'}))
+        while not b['active']:
+            await asyncio.sleep(.01)
+        path = tmp_path / 'config.json'
+        await set_drain(pool, path, 'b', True)
+        status = (await c.get('/admin/status')).json()
+        worker = status['backends'][1]
+        assert status['capacity'] == status['configured_capacity'] == 1
+        assert status['total_configured_capacity'] == 2
+        assert worker['healthy'] and worker['draining'] and not worker['accepting']
+        assert worker['gateway_inflight'] == 1 and not worker['drained']
+        assert (await c.get('/ready')).status_code == 200
+        assert (await c.post('/v1/chat/completions', json={'model': 'test'},
+                             headers={'X-Spark-Node': 'b'})).status_code == 503
+        response = await c.post('/v1/chat/completions', json={'model': 'test'})
+        assert response.headers['x-spark-node'] == 'a'
+        result = await active
+        assert result.status_code == 200 and result.text.endswith('data: [DONE]\n\n')
+        assert b['requests'] == 1 and b['cancelled'] == 0
+        await pool.poll()
+        assert pool.status()['backends'][1]['drained']
+        metric = (await c.get('/metrics')).text
+        assert 'spark_gateway_draining{replica="b"} 1' in metric
+        assert 'spark_gateway_backend_up{replica="b"} 1' in metric
+        assert 'vllm:generation_tokens_total{model_name="test",replica="b"} 1' in metric
+        # An invalid boolean must not silently resume a drained backend.
+        await set_drain(pool, path, 'b', 'false')
+        assert pool.nodes[1].draining
+        await set_drain(pool, path, 'b', False)
+        response = await c.post('/v1/chat/completions', json={'model': 'test'}, headers={'X-Spark-Node': 'b'})
+        assert response.status_code == 200 and b['requests'] == 2
+
+
+@pytest.mark.asyncio
+async def test_queued_request_moves_to_remaining_replica_during_drain(tmp_path):
+    async with cluster(capacity=1) as (c, pool, a, b):
+        active = [asyncio.create_task(c.post('/v1/chat/completions', json={
+            'model': 'test', 'delay': .05, 'count': count}, headers={'X-Spark-Node': name}))
+                  for name, count in [('a', 5), ('b', 12)]]
+        while not a['active'] or not b['active']:
+            await asyncio.sleep(.01)
+        queued = asyncio.create_task(c.post('/v1/chat/completions', json={'model': 'test'}))
+        while pool.queued == 0:
+            await asyncio.sleep(.01)
+        await set_drain(pool, tmp_path / 'config.json', 'b', True)
+        response = await queued
+        assert response.status_code == 200 and response.headers['x-spark-node'] == 'a'
+        assert a['requests'] == 2 and b['requests'] == 1
+        assert all(r.status_code == 200 for r in await asyncio.gather(*active))
+        assert pool.queued == pool.buffered == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_stream_and_reject_queued_pin_while_draining(tmp_path):
+    async with cluster(capacity=1) as (c, pool, a, b):
+        async with c.stream('POST', '/v1/chat/completions', json={
+                'model': 'test', 'count': 100, 'delay': .05}, headers={'X-Spark-Node': 'b'}) as stream:
+            lines = stream.aiter_lines()
+            assert 'content' in await anext(lines)
+            queued = asyncio.create_task(c.post('/v1/chat/completions', json={'model': 'test'},
+                                               headers={'X-Spark-Node': 'b'}))
+            for _ in range(200):
+                if pool.queued or queued.done():
+                    break
+                await asyncio.sleep(.01)
+            assert pool.queued, (queued.result() if queued.done() else pool.status())
+            await set_drain(pool, tmp_path / 'config.json', 'b', True)
+            assert (await queued).status_code == 503
+        for _ in range(100):
+            if pool.nodes[1].inflight == b['active'] == 0:
+                break
+            await asyncio.sleep(.02)
+        assert b['cancelled'] == 1 and b['requests'] == 1
+        assert pool.nodes[1].inflight == pool.nodes[1].debt == pool.nodes[1].sent == 0
+        assert pool.buffered == pool.queued == 0
+
+
+@pytest.mark.asyncio
+async def test_drain_of_distinct_model_never_substitutes_another_model(tmp_path):
+    app_a, a = fake('a', 'model-a')
+    app_b, b = fake('b', 'model-b')
+    async with server(app_a) as ua, server(app_b) as ub:
+        app = create_app({'backends': [{'name': 'a', 'url': ua, 'capacity': 1},
+                                      {'name': 'b', 'url': ub, 'capacity': 1}]})
+        async with server(app) as url, httpx.AsyncClient(base_url=url) as c:
+            pool = app.state.pool
+            path = tmp_path / 'config.json'
+            await set_drain(pool, path, 'b', True)
+            assert {m['id'] for m in (await c.get('/v1/models')).json()['data']} == {'model-a'}
+            assert (await c.post('/v1/chat/completions', json={'model': 'model-b'})).status_code == 503
+            assert b['requests'] == a['requests'] == 0
+            assert (await c.post('/v1/chat/completions', json={'model': 'model-a'})).status_code == 200
+            b['healthy'] = False
+            await pool.poll()
+            assert (await c.get('/ready')).status_code == 200
+            assert not pool.status()['backends'][1]['drained']  # Failed poll is not proof of idle.
+            await set_drain(pool, path, 'a', True)
+            assert (await c.get('/health')).status_code == 503
+            assert (await c.get('/ready')).status_code == 503
+            await set_drain(pool, path, 'b', False)
+            b['healthy'] = True
+            await pool.poll()
+            assert (await c.post('/v1/chat/completions', json={'model': 'model-b'})).status_code == 200

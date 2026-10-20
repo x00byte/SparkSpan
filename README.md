@@ -6,12 +6,21 @@ SparkSpan routes OpenAI-compatible chat and completion requests across independe
 
 Each request runs on one backend. Replicas own their weights and KV caches; the gateway balances requests rather than splitting a model across GPUs. A dedicated GPU interconnect is unnecessary for this arrangement. Every model must fit on its assigned backend, and the machines still need ordinary network connectivity.
 
+## Keep production running while testing
+
+SparkSpan grew out of losing production time whenever a new model or recipe needed both machines. With independent servers, leave production on Spark A, drain Spark B, test there, then return B to the pool. Spark A's model process keeps running throughout. A dedicated interconnect is unnecessary for this workflow.
+
+Set `"draining": true` on B in the settings file. After the hot reload, B accepts no new gateway requests while existing responses finish. Check `/admin/status` for `draining`, `gateway_inflight`, native `running`/`waiting` and `drained` before stopping B's model. Once the original model is restored and healthy, set `draining` to `false` to return it. [Step-by-step maintenance](docs/operations.md#testing-on-one-spark).
+
+This temporarily reduces production admission from twelve slots to six in our example. Production continues on A with less capacity; it can queue or slow under the same workload. Configuration reload and native metrics are polled, so a drain is not an instantaneous guarantee that the other engine has no work. Direct clients and older gateway instances must also stop assigning B work.
+
 ## What it does
 
 - Discovers served model names and merges them into `GET /v1/models`. Routes each request only to a backend advertising the requested model.
 - Balances replicas using available slots and estimated prefill work. Soft conversation affinity encourages prefix-cache reuse without preventing overflow to another replica.
 - Enforces per-backend admission limits and optional shared host limits when several model servers share a machine.
 - Passes through streaming SSE, non-streaming results, tool calls, reasoning and usage. Client cancellation closes the upstream connection and releases its slot.
+- Drains one backend for maintenance without cancelling its active responses or restarting the other model.
 - Provides bounded queues, connection-failure failover, backend health checks and aggregate Prometheus metrics with a `replica` label.
 
 SparkSpan runs on the CPU and does not load weights, quantize models, share KV caches, or change inference kernels. It does not automatically load or evict models. Shared host limits count requests; they cannot guarantee that several loaded models fit in GPU memory.
@@ -102,36 +111,28 @@ The host budget does not serialize individual GPU kernels or provide fairness be
 | `GET /v1/models` | Union of models on ready backends |
 | `GET /version` | Version from one ready engine |
 | `GET /health` | 200 when at least one backend is healthy |
-| `GET /ready` | 200 when every configured backend is healthy |
+| `GET /ready` | 200 when every non-draining backend is healthy and at least one accepts work |
 | `GET /admin/status` | Per-backend models, load, limits, health and queue |
 | `GET /metrics` | Backend metrics labelled by replica, plus gateway metrics |
 
-`/health` does not guarantee availability of every advertised model. `/ready` requires all configured backends. Stateful Responses API objects, uploads, audio and arbitrary engine administration endpoints are not routed.
+`/health` does not guarantee availability of every configured model. `/ready` excludes backends explicitly drained for maintenance. `/v1/models` lists only models on backends currently accepting work. Stateful Responses API objects, uploads, audio and arbitrary engine administration endpoints are not routed.
 
 See [operation and deployment](docs/operations.md) for scheduling, failure behavior, live capacity changes and an optional helper that preserves an existing production port when switching between independent replicas and TP=2.
 
-## Performance and validation
+## Validation and measurement
 
-The first GPU deployment used the same Qwen hibrid48 checkpoint on two GB10 machines, each running TP=1, with six gateway admission slots per machine. It served production traffic with streaming, tools, reasoning and vision. Multiple different models and shared-host admission were verified with local HTTP test servers, not a multi-model GPU benchmark.
+The first GPU deployment used the same Qwen hibrid48 checkpoint on two GB10 machines, each running TP=1, with six gateway admission slots per machine. It served production traffic with streaming, tools, reasoning and vision. Distinct-model routing, shared-host limits and the new draining behavior are covered by local HTTP tests, not by a multi-model GPU benchmark.
 
-| Observed production window | Earlier TP=2 | Two independent TP=1 replicas |
-| --- | ---: | ---: |
-| Duration | 16.80 hours | 10 minutes |
-| Output tokens/s, wall-time average | 138.2 | 112.0 |
-| Uncached input tokens/s, wall-time average | 1,201.0 | 2,240.9 |
-| Configured admission slots | 10 | 12, six per replica |
-| Errors recorded in window | 0 | 0 |
+We do not yet have a controlled performance comparison with TP=2. An early ten-minute replica observation and a much longer historical TP=2 window were unequal and used different workloads and recipes. They have been retained only as [historical provenance](benchmarks/archive/README.md), not as evidence that one topology is faster. The first short observation also used fabric HTTP, so it is not a no-cable benchmark.
 
-**These are different live workloads, not a matched A/B benchmark.** Engine recipes, KV precision, MTP settings and cache warmth also differ. The independent deployment processed more uncached input per second in its observed window, but had lower aggregate output throughput and higher observed time to first token. This does not establish an overall speedup or a twofold capacity gain.
-
-The measured ten-minute window used the existing fabric IP path for inference HTTP. An ordinary 1 Gb/s LAN route was subsequently brought up and verified without restarting the model servers. Existing fabric connections were allowed to drain. We do not present the earlier window as a LAN-only benchmark or claim the dedicated cables were physically unplugged. [Full methodology and sanitized results](benchmarks/README.md).
+Ordinary 1 Gb/s LAN inference routing was separately verified; the dedicated links were still physically attached. A fresh continuous observation should report its actual elapsed duration, network path, production capacity and any maintenance intervals. [Measurement method](benchmarks/README.md).
 
 ```bash
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pytest -q
 ```
 
-Tests exercise real local HTTP/SSE connections to fake engines, including concurrency, model selection, affinity, shared-host limits, queue bounds, cancellation, failover, live capacity changes, metric labels and scoped deployment recovery. They do not measure GPU throughput. No weights, private production prompts, credentials or local deployment settings are included.
+Tests exercise real local HTTP/SSE connections to fake engines, including concurrency, model selection, affinity, shared-host limits, queue bounds, cancellation, failover, live capacity changes, draining/resume, metric labels and scoped deployment recovery. They do not measure GPU throughput. No weights, private production prompts, credentials or local deployment settings are included.
 
 ## License
 

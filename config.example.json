@@ -1,7 +1,17 @@
 {
   "backends": [
-    {"name": "spark-a", "url": "http://spark-a:8888", "capacity": 6},
-    {"name": "spark-b", "url": "http://spark-b:8888", "capacity": 6}
+    {
+      "name": "spark-a",
+      "url": "http://spark-a:8888",
+      "capacity": 6,
+      "draining": false
+    },
+    {
+      "name": "spark-b",
+      "url": "http://spark-b:8888",
+      "capacity": 6,
+      "draining": false
+    }
   ],
   "affinity_secret": "replace-with-a-random-secret",
   "max_queue": 32,

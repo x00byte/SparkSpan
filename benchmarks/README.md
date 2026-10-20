@@ -1,46 +1,36 @@
-# Production observations
+# Continuous production observation
 
-These records describe an earlier tensor-parallel deployment and a later independent-replica deployment of the same hibrid48 checkpoint on two GB10 machines. They are **not a replay of the same workload**. The observations do not establish that SparkSpan is faster than TP=2.
+There is no current matched TP=2 versus independent-replica performance result. The first short observation is retained in the [historical archive](archive/README.md) and must not be used as a topology speedup claim.
 
-[Machine-readable aggregate results](production-observations.json) contain no prompts, credentials, private host addresses or request-level production data.
+A fresh observation should begin at a recorded UTC timestamp and continue while production runs. Report actual elapsed time from the first valid metric sample to the latest valid sample, together with both timestamps. Do not label a requested ten-minute run complete merely because ten minutes were configured. Mark interruptions, sample failures, model restarts, counter resets, gateway cutovers and maintenance periods explicitly.
 
-| Measure | Earlier TP=2 | Independent TP=1 replicas |
-| --- | ---: | ---: |
-| Observation duration | 60,463.67 seconds | 600.00 seconds |
-| Generated tokens | 8,353,421 | 67,172 |
-| Computed uncached input tokens | 72,617,185 | 1,344,516 |
-| Generated tokens / elapsed second | 138.16 | 111.95 |
-| Computed uncached input tokens / elapsed second | 1,201.01 | 2,240.86 |
-| Completed requests recorded | 10,670 | 81 |
-| Errors recorded | 0 | 0 |
-| Admission slots | 10 | 6 per replica, 12 total |
+## Metrics
 
-The independent window averaged 11.33 running requests. Each replica delivered about 56 output tokens/s. No preemptions were observed in that ten-minute interval. Minimum available memory on the gateway host was 8.12 GiB, so this is not evidence that a larger concurrency target is safe.
+Poll `/admin/status` and `/metrics` at a fixed cadence, for example ten seconds. Save only sanitized operational counters and timing, not prompts, credentials or raw production requests. Native vLLM counters have a `replica` label; track each replica before summing.
 
-## Method
+For a stable interval without counter resets:
 
-The TP=2 reference is an archived dashboard run lasting about 16.8 hours. Wall-time rates above divide its recorded token totals by its recorded duration. Its dashboard also records a sample-mean output rate of 141.72 tokens/s; that is a different statistic from the wall-time rate and is not substituted in the table.
+- Aggregate output tokens/s is the sum of each replica's generation-counter delta divided by actual elapsed seconds.
+- Uncached prefill tokens/s uses computed prompt tokens, excluding cached input. Prompt-token totals including cache are a different statistic.
+- Record completed requests, errors, preemptions, running and waiting requests, gateway queue, admission capacity and memory headroom alongside throughput.
+- Calculate latency from matching histogram count/sum deltas or distributions. Do not sum backend latency averages or compare differently weighted averages as equivalent.
 
-The independent window sampled the two engines' native cumulative metrics for ten minutes while production requests were active. Rates are summed end-minus-start token counters divided by measured elapsed time. Uncached input excludes cached prompt tokens. Prompt throughput including cached tokens was 15,864.22 tokens/s, which is not the rate at which the GPUs computed new prompt tokens.
+If an engine restarts, split the observation at the reset. If a sample fails, disclose the missing interval rather than silently manufacturing a rate. During a drain, retain metrics for the draining engine until its work finishes and record the temporary capacity reduction.
 
-Latency values need caution. The historical dashboard sample-mean time to first token was 3.72 seconds. The independent engines' request-weighted means over their window were 10.96 seconds and 8.97 seconds. These different summaries and different workloads do not support a latency improvement claim.
+## Comparing recipes or topologies
 
-The new deployment admitted more requests and processed more uncached input per second in its observed window, while producing fewer output tokens per second. Model-server recipes also changed: TP=2 used BF16 KV and MTP up to three tokens; each independent replica used FP8 KV, local PLE offload and dynamic MTP up to seven tokens. Prefix cache sizes and block alignment differed. The gateway alone cannot be credited for the observed difference.
+A fair performance comparison should replay the same prompts, output lengths, sampling parameters, cache preparation and concurrency against each recipe, with the same engine settings where the topology permits. Independent replicas require a full model copy and keep separate caches. TP=2 shares a request across ranks, so its memory allocation and communication costs differ.
 
-## Ordinary LAN versus dedicated interconnect
+For a production observation that cannot replay identical work, publish the workloads and durations as observations without ranking overall performance. Record model/checkpoint revision, engine revision, KV precision and size, block alignment, context limit, speculative settings and prefix-cache behavior. A high aggregate throughput can still hide long per-request stalls or increased time to first token.
 
-Independent replicas require HTTP request and response traffic; they do not perform tensor-parallel GPU collectives. We verified an inference HTTP route over the machines' ordinary 1 Gb/s LAN interfaces. The existing dedicated links remained physically attached and available for management. This was not an unplugged-cable test.
+## Verifying ordinary LAN inference
 
-The table above predates the LAN cutover and used a fabric IP for inference HTTP. Existing streaming and reused HTTP connections were allowed to drain instead of being interrupted. A clean LAN-only throughput result was not available when these results were prepared, so the fabric numbers must not be presented as a no-cable benchmark.
+Record the actual backend URL path and network interface used for HTTP. Before labelling a window LAN-only, allow older fabric HTTP connections to finish and verify there are no remaining inference sockets on that path. Reused keepalive connections can retain the old destination after a port redirect changes. A physically attached dedicated link can still be used for management; describe this accurately rather than claiming an unplugged-cable test.
 
-## Validation boundaries
+## Maintenance windows
 
-The real deployment exercised two replicas of one Qwen checkpoint. Worker qualification covered text, eight simultaneous arithmetic checks, tools, reasoning, vision and expected validation errors; a later six-request check passed with the six-slot admission target. A live streaming cancellation closed the upstream request and released the gateway slot. The model containers stayed running during endpoint cutover.
-
-The repository's HTTP tests separately cover distinct model names on one endpoint and several engines sharing a host budget. They use fake engines and do not prove that any particular set of real models fits or performs well on one GPU. No synthetic twelve-request benchmark was inserted into active production traffic.
-
-A controlled next comparison should replay the same prompts, output lengths, sampling, cache preparation and concurrency against both recipes, then repeat over ordinary LAN with all old fabric inference connections closed. Report aggregate output, uncached prefill, latency distributions, per-request output rate, errors and memory headroom together.
+When B is drained for model testing, A continues production at its own configured capacity. Keep that period separate from a two-replica steady-state comparison. Exclude synthetic maintenance reservations or load tests from unqualified production throughput summaries. Returning B to service begins a new interval with different capacity and usually a different cache state.
 
 ## Credits
 
-The measured [hibrid48 checkpoint](https://huggingface.co/myllmbox/Qwen3.8-Flash-Next-hibrid48-uncensored) and [Qwen3.8 Flash Next recipe](https://github.com/myllmbox/qwen38-flash-next-recipe) come from myllmbox, with the model based on Qwen. [vLLM](https://github.com/vllm-project/vllm) supplies inference and native performance counters. SparkSpan supplies the request gateway and the observation summaries; no third-party model weights are included.
+[vLLM](https://github.com/vllm-project/vllm) supplies the native engine metrics. The initial GPU deployment used [myllmbox's recipe](https://github.com/myllmbox/qwen38-flash-next-recipe) and [hibrid48 checkpoint](https://huggingface.co/myllmbox/Qwen3.8-Flash-Next-hibrid48-uncensored), based on Qwen. SparkSpan supplies the request-routing state and observation guidance.
