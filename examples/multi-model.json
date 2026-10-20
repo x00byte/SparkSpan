@@ -1,0 +1,15 @@
+{
+  "affinity_secret": "replace-with-a-random-secret",
+  "backends": [
+    {"name": "a-model-a", "host": "spark-a", "url": "http://host.docker.internal:8001", "models": ["model-a"], "capacity": 4},
+    {"name": "a-model-b", "host": "spark-a", "url": "http://host.docker.internal:8002", "models": ["model-b"], "capacity": 2},
+    {"name": "b-model-a", "host": "spark-b", "url": "http://spark-b:8001", "models": ["model-a"], "capacity": 6}
+  ],
+  "host_limits": {"spark-a": 6, "spark-b": 6},
+  "max_queue": 32,
+  "queue_timeout": 120,
+  "max_body_bytes": 33554432,
+  "max_buffer_bytes": 134217728,
+  "stall_seconds": 180,
+  "poll_seconds": 1
+}

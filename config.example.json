@@ -1,0 +1,13 @@
+{
+  "backends": [
+    {"name": "spark-a", "url": "http://spark-a:8888", "capacity": 6},
+    {"name": "spark-b", "url": "http://spark-b:8888", "capacity": 6}
+  ],
+  "affinity_secret": "replace-with-a-random-secret",
+  "max_queue": 32,
+  "queue_timeout": 120,
+  "max_body_bytes": 33554432,
+  "max_buffer_bytes": 134217728,
+  "stall_seconds": 180,
+  "poll_seconds": 1
+}

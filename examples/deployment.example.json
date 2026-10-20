@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    {"name": "spark-a", "container": "model-a-replica", "image": "sha256:REPLACE_WITH_MODEL_IMAGE_ID", "launcher": "/opt/model/launch.py", "url": "http://127.0.0.2:8888"},
+    {"name": "spark-b", "ssh": ["ssh", "-o", "BatchMode=yes", "operator@spark-b"], "container": "model-a-replica", "image": "sha256:REPLACE_WITH_MODEL_IMAGE_ID", "launcher": "/opt/model/launch.py", "url": "http://spark-b:8888"}
+  ],
+  "model_alias": "model-a",
+  "gateway_image": "sha256:REPLACE_WITH_SPARKSPAN_IMAGE_ID",
+  "gateway_container": "sparkspan-gateway",
+  "gateway_config": "/secure/sparkspan/config.json",
+  "gateway_url": "http://127.0.0.1:8890",
+  "gateway_listen_port": 8890,
+  "log_dir": "/var/tmp/sparkspan-logs"
+}

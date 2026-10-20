@@ -1,0 +1,26 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "${SPARKSPAN_PORT:-8888}:8890"
+    environment:
+      SPARK_GATEWAY_CONFIG: /settings/config.json
+    volumes:
+      - ./settings:/settings:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 1
+    restart: unless-stopped
+    stop_grace_period: 5m
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"

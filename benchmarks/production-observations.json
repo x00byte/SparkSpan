@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-10-20",
+  "hardware": "Two GB10 / DGX Spark-class machines, about 128 GB unified memory per machine",
+  "model": {
+    "repository": "myllmbox/Qwen3.8-Flash-Next-hibrid48-uncensored",
+    "revision": "572e216abdc523306fa9e1ded741b26b59d1169e"
+  },
+  "comparison": "Unmatched production observations. Not a controlled benchmark or evidence of an overall speedup.",
+  "historical_tp2": {
+    "duration_s": 60463.66860437393,
+    "configured_max_sequences": 10,
+    "tensor_parallel_size": 2,
+    "generated_tokens": 8353421.0,
+    "uncached_input_tokens": 72617185.0,
+    "output_tokens_per_second": 138.15603969812236,
+    "uncached_input_tokens_per_second": 1201.0052759972107,
+    "completed_requests": 10670.0,
+    "errors": 0.0,
+    "dashboard_sample_mean_output_tps": 141.7156022239251,
+    "dashboard_sample_mean_ttft_s": 3.7170819486348288,
+    "dashboard_prefix_hit_percent": 93.37657588822388,
+    "settings": {
+      "vllm_version": "0.32.0",
+      "kv_cache_dtype": "bfloat16",
+      "kv_cache_memory_bytes_per_rank": 35000000000,
+      "max_model_len": 262144,
+      "max_num_batched_tokens": 8192,
+      "mtp_max_draft_tokens": 3,
+      "mamba_cache_mode": "align",
+      "block_size": 1728
+    }
+  },
+  "independent_replicas_fabric_http": {
+    "duration_s": 600.0003389759222,
+    "tensor_parallel_size_per_replica": 1,
+    "replicas": 2,
+    "admission_limit_per_replica": 6,
+    "engine_max_sequences_per_replica": 8,
+    "output_tps": 111.95329679263682,
+    "uncached_prefill_tps": 2240.8592914356664,
+    "prompt_tps_including_cache": 15864.215232675184,
+    "generated_tokens": 67172.0,
+    "uncached_tokens": 1344516.0,
+    "completed_requests": 81.0,
+    "errors": 0.0,
+    "preemptions": 0.0,
+    "mean_running": 11.327586206896552,
+    "peak_gateway_queue": 1,
+    "min_combined_running": 9.0,
+    "min_head_mem_available_gib": 8.120174407958984,
+    "fetch_errors": 0,
+    "per_replica": {
+      "spark-a": {
+        "output_tps": 56.10497208823877,
+        "uncached_prefill_tps": 1056.4211411058554,
+        "prompt_tps_including_cache": 6753.058307075813,
+        "generated_tokens": 33663.0,
+        "uncached_tokens": 633853.0,
+        "completed_requests": 36.0,
+        "errors": 0.0,
+        "preemptions": 0.0,
+        "mean_running": 5.844827586206897,
+        "peak_waiting": 1.0,
+        "max_kv_pct": 49.411764705882355,
+        "mean_ttft_s": 10.9565437355557,
+        "mean_queue_s": 1.1192126500633701,
+        "mean_e2e_s": 102.79463561375935
+      },
+      "spark-b": {
+        "output_tps": 55.84832470439806,
+        "uncached_prefill_tps": 1184.438150329811,
+        "prompt_tps_including_cache": 9111.15692559937,
+        "generated_tokens": 33509.0,
+        "uncached_tokens": 710663.0,
+        "completed_requests": 45.0,
+        "errors": 0.0,
+        "preemptions": 0.0,
+        "mean_running": 5.482758620689655,
+        "peak_waiting": 1.0,
+        "max_kv_pct": 51.37254901960784,
+        "mean_ttft_s": 8.96539673399418,
+        "mean_queue_s": 0.1482475622350143,
+        "mean_e2e_s": 73.25106266869439
+      }
+    },
+    "settings": {
+      "vllm_version": "0.32.0 with myllmbox v5.3 recipe",
+      "kv_cache_dtype": "fp8",
+      "kv_cache_memory_bytes_per_replica": 24000000000,
+      "max_model_len": 262144,
+      "max_num_batched_tokens": 8192,
+      "long_prefill_token_threshold": 6912,
+      "effective_block_size": 6624,
+      "mtp_max_draft_tokens": 7,
+      "mtp_dynamic_depth": true,
+      "cpu_ple_offload": true
+    }
+  },
+  "lan_validation": {
+    "status": "HTTP inference route verified; clean LAN-only observation not yet available at publication",
+    "link_megabits_per_second": 1000,
+    "gpu_interconnect_used_for_inference_collectives": false,
+    "dedicated_cables_physically_unplugged": false
+  },
+  "limitations": [
+    "Different production requests, input lengths, cache warmth and sampling.",
+    "Different engine recipes, KV precision, block sizes and MTP settings.",
+    "The ten-minute measured HTTP window used the fabric path, not the ordinary LAN.",
+    "No public prompts or full production request traces; only sanitized aggregates.",
+    "Independent replicas each require a full model copy and have separate caches."
+  ]
+}

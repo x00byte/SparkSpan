@@ -1,0 +1,9 @@
+Generated with the built-in image_gen tool on 2026-10-20.
+The image is an illustration, not a photograph of the measured hardware.
+
+Use case: product-mockup. Asset type: wide GitHub README cover image, landscape 2:1.
+Primary request: a polished editorial 3D product illustration for SparkSpan, an open-source gateway for independent AI model servers on one computer or several DGX Spark computers.
+Scene: two compact silver mini-computers resembling DGX Spark desktop form factors on a quiet studio surface, with a small translucent central API panel and restrained luminous network paths reaching each machine through a normal network. One machine has two small translucent model panels hovering above it; the other has one. They are independent model servers, with no direct GPU interconnect cable between the computers.
+Composition: balanced wide cover, generous clean space, elegant typography, crisp realistic materials, sophisticated soft lighting, subtle depth, dark neutral background with restrained warm and cool light accents.
+Text verbatim: large title "SparkSpan". Smaller subtitle "One endpoint. Independent model servers." Central panel "OpenAI API". Model panels "Model A", "Model B", "Model C".
+Constraints: no throughput numbers, no performance or superiority claims, no NVIDIA logos, no wireless symbol or claim of zero networking, no mascot, no extra slogans, no watermark. Keep the typography legible and the overall image refined rather than busy.
